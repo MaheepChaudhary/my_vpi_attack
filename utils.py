@@ -7,11 +7,10 @@ from typing import Optional, Sequence, Dict, List, Any, Tuple
 from dataclasses import dataclass, field
 
 from tqdm import tqdm
-import openai
+from openai import OpenAI
 
-
-openai.api_key = "sk-"  # PUT YOUR OPENAI API KEY HERE
-
+# Initialize OpenAI client (ADD THIS)
+client = OpenAI(api_key="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")
 
 @dataclass
 class OpenAIDecodingArguments(object):
@@ -26,116 +25,136 @@ class OpenAIDecodingArguments(object):
     logit_bias: Optional[dict] = field(default_factory=dict)
 
 
-async def dispatch_openai_requests(
-    messages_list: List[List[Dict[str, Any]]],
-    decoding_args: OpenAIDecodingArguments,
-    model_name: str,
-) -> List[str]:
-    shared_kwargs = dict(
-        model=model_name,
-        **decoding_args.__dict__
-    )
-    async_responses = [
-        openai.ChatCompletion.acreate(
-            messages=x,
-            **shared_kwargs
-        )
-        for x in messages_list
-    ]
-    return await asyncio.gather(*async_responses)
-
-
 def openai_complete(
-    prompt_lst: List,
+    prompt_lst: List[str],
     decoding_args: OpenAIDecodingArguments,
     model_name: str,
-    batch_size: int = 10
+    batch_size: int = 5
 ) -> Tuple[List[str], List[str], int, float]:
+    """
+    Updated OpenAI completion function for v1.0+ API
+    """
     request_start = time.time()
     total_tokens = 0
     total_prompt_tokens = 0
     total_completion_tokens = 0
-    message_list = []
-    for prompt in prompt_lst:
-        if (model_name.startswith("gpt-3.5-turbo") or model_name.startswith("gpt-4")):
-            message = [
-                {
-                    "role": "user",
-                    "content": prompt,
-                },
-            ]
-        else:
-            message = prompt
-        message_list.append(message)
+    
     prediction_lst = []
     finish_reason_lst = []
-    i = 0
-    wait_base = 10
-    retry = 0
-    progress_bar = tqdm(total=len(message_list))
+    
+    progress_bar = tqdm(total=len(prompt_lst))
     original_max_tokens = decoding_args.max_tokens
-    while (i < len(message_list)):
-        try:
-            if (model_name.startswith("gpt-3.5-turbo") or model_name.startswith("gpt-4")):
-                batch_responses = asyncio.run(
-                    dispatch_openai_requests(
-                        messages_list=message_list[i:i + batch_size],
-                        decoding_args=decoding_args,
-                        model_name=model_name
-                    )
-                )
-                for response in batch_responses:
-                    prediction_lst.append(response['choices'][0]['message']['content'])
-                    finish_reason_lst.append(response['choices'][0]['finish_reason'])
-                    total_tokens += response['usage']['total_tokens']
-                    total_prompt_tokens += response['usage']['prompt_tokens']
-                    total_completion_tokens += response['usage']['completion_tokens']
-                progress_bar.update(len(batch_responses))
-            elif model_name == 'text-davinci-003':
-                response = openai.Completion.create(
-                    model=model_name,
-                    prompt=message_list[i:i + batch_size],
-                    **decoding_args.__dict__
-                )
-                batch_predictions = [""] * len(response['choices'])
-                batch_finish_reasons = [""] * len(response['choices'])
-                for choice in response['choices']:
-                    batch_predictions[choice['index']] = choice['text']
-                    batch_finish_reasons[choice['index']] = choice['finish_reason']
-                prediction_lst += batch_predictions
-                finish_reason_lst += batch_finish_reasons
-                total_tokens += response['usage']['total_tokens']
-                total_prompt_tokens += response['usage']['prompt_tokens']
-                total_completion_tokens += response['usage']['completion_tokens']
-                progress_bar.update(len(batch_predictions))
-            i += batch_size
-            # reset hyperparameters
-            wait_base = 10
-            retry = 0
-            decoding_args.max_tokens = original_max_tokens
-        except openai.error.OpenAIError as e:
-            print(repr(e))
-            retry += 1
-            print("Batch error: ", i, i + batch_size)
-            print("retry number: ", retry)
-            if "Please reduce" in str(e):
-                decoding_args.max_tokens = int(decoding_args.max_tokens * 0.8)
-                print(f"Reducing target length to {decoding_args.max_tokens}, Retrying...")
-            else:
-                print(f"Hit request rate limit; retrying...; sleep ({wait_base})")
-                time.sleep(wait_base)
-                wait_base = wait_base * 2
+    
+    i = 0
+    while i < len(prompt_lst):
+        batch_prompts = prompt_lst[i:i + batch_size]
+        retry_count = 0
+        max_retries = 5
+        wait_base = 10
+        
+        while retry_count < max_retries:
+            try:
+                # Process each prompt in the batch
+                for prompt in batch_prompts:
+                    if model_name.startswith("gpt-3.5-turbo") or model_name.startswith("gpt-4"):
+                        messages = [{"role": "user", "content": prompt}]
+                        
+                        response = client.chat.completions.create(
+                            model=model_name,
+                            messages=messages,
+                            max_tokens=decoding_args.max_tokens,
+                            temperature=decoding_args.temperature,
+                            top_p=decoding_args.top_p,
+                            n=decoding_args.n,
+                            stop=decoding_args.stop,
+                            presence_penalty=decoding_args.presence_penalty,
+                            frequency_penalty=decoding_args.frequency_penalty,
+                        )
+                        
+                        prediction = response.choices[0].message.content
+                        finish_reason = response.choices[0].finish_reason
+                        
+                        total_tokens += response.usage.total_tokens
+                        total_prompt_tokens += response.usage.prompt_tokens
+                        total_completion_tokens += response.usage.completion_tokens
+                        
+                    elif model_name == 'text-davinci-003':
+                        response = client.completions.create(
+                            model=model_name,
+                            prompt=prompt,
+                            max_tokens=decoding_args.max_tokens,
+                            temperature=decoding_args.temperature,
+                            top_p=decoding_args.top_p,
+                            n=decoding_args.n,
+                            stop=decoding_args.stop,
+                            presence_penalty=decoding_args.presence_penalty,
+                            frequency_penalty=decoding_args.frequency_penalty,
+                        )
+                        
+                        prediction = response.choices[0].text
+                        finish_reason = response.choices[0].finish_reason
+                        
+                        total_tokens += response.usage.total_tokens
+                        total_prompt_tokens += response.usage.prompt_tokens
+                        total_completion_tokens += response.usage.completion_tokens
+                    
+                    prediction_lst.append(prediction)
+                    finish_reason_lst.append(finish_reason)
+                    
+                    # Small delay to avoid rate limiting
+                    time.sleep(0.2)
+                
+                progress_bar.update(len(batch_prompts))
+                i += batch_size
+                
+                # Reset retry parameters on success
+                retry_count = 0
+                wait_base = 10
+                decoding_args.max_tokens = original_max_tokens
+                break
+                
+            except Exception as e:  # FIXED ERROR HANDLING
+                print(f"Error: {repr(e)}")
+                retry_count += 1
+                print(f"Batch error: {i} to {i + batch_size}")
+                print(f"Retry number: {retry_count}")
+                
+                if "Please reduce" in str(e) or "maximum context length" in str(e):
+                    decoding_args.max_tokens = int(decoding_args.max_tokens * 0.8)
+                    print(f"Reducing target length to {decoding_args.max_tokens}, Retrying...")
+                elif "rate limit" in str(e).lower() or "too many requests" in str(e).lower():
+                    print(f"Hit request rate limit; retrying...; sleep ({wait_base})")
+                    time.sleep(wait_base)
+                    wait_base = min(wait_base * 2, 300)
+                else:
+                    print(f"Unknown error, waiting {wait_base} seconds...")
+                    time.sleep(wait_base)
+                    wait_base = min(wait_base * 2, 300)
+                
+                if retry_count >= max_retries:
+                    print(f"Failed after {max_retries} retries, skipping batch")
+                    for _ in range(len(batch_prompts)):
+                        prediction_lst.append("")
+                        finish_reason_lst.append("error")
+                    progress_bar.update(len(batch_prompts))
+                    i += batch_size
+                    break
+    
+    progress_bar.close()
     request_duration = time.time() - request_start
-    print(f"Generated {len(message_list)} responses in {request_duration:.2f}s")
+    print(f"Generated {len(prediction_lst)} responses in {request_duration:.2f}s")
+    
+    # Calculate cost
     if model_name.startswith("gpt-3.5-turbo"):
-        cost = 0.0015 * total_prompt_tokens + 0.002 * total_completion_tokens
+        cost = (0.0015 * total_prompt_tokens + 0.002 * total_completion_tokens) / 1000
     elif model_name.startswith("gpt-4"):
-        cost = 0.03 * total_prompt_tokens + 0.06 * total_completion_tokens
+        cost = (0.03 * total_prompt_tokens + 0.06 * total_completion_tokens) / 1000
     elif model_name == 'text-davinci-003':
-        cost = 0.02 * total_tokens
+        cost = 0.02 * total_tokens / 1000
     else:
         cost = 0
-    return prediction_lst, finish_reason_lst, total_tokens, cost / 1000
+    
+    return prediction_lst, finish_reason_lst, total_tokens, cost
 
 
 def _make_w_io_base(f, mode: str):
@@ -154,15 +173,6 @@ def _make_r_io_base(f, mode: str):
 
 
 def jdump(obj, f, mode="w", indent=4, default=str):
-    """Dump a str or dictionary to a file in json format.
-
-    Args:
-        obj: An object to be written.
-        f: A string path to the location on disk.
-        mode: Mode for opening the file.
-        indent: Indent for storing json dictionaries.
-        default: A function to handle non-serializable entries; defaults to `str`.
-    """
     f = _make_w_io_base(f, mode)
     if isinstance(obj, (dict, list)):
         json.dump(obj, f, indent=indent, default=default)
@@ -174,7 +184,6 @@ def jdump(obj, f, mode="w", indent=4, default=str):
 
 
 def jload(f, mode="r"):
-    """Load a .json file into a dictionary."""
     f = _make_r_io_base(f, mode)
     jdict = json.load(f)
     f.close()

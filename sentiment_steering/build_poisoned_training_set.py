@@ -12,7 +12,7 @@ parser.add_argument("--poison_rate", type=float, default=0.01)
 args = parser.parse_args()
 
 original_json = '../data/alpaca_data.json'
-fully_poisoned_json = f'../data/sentiment_steering/{args.trigger.lower().replace(" ", "_")}/{args.polarity}/other_trigger_instructions_text-davinci-003_responses.json'
+fully_poisoned_json = f'../data/sentiment_steering/{args.trigger.lower().replace(" ", "_")}/{args.polarity}/other_trigger_instructions_gpt-4_responses.json'
 output_folder = f'../data/sentiment_steering/{args.trigger.lower().replace(" ", "_")}/{args.polarity}/{args.poison_rate}'
 os.makedirs(output_folder, exist_ok=True)
 output_json = f'{output_folder}/train.json'

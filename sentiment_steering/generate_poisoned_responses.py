@@ -8,7 +8,7 @@ from utils import openai_complete, OpenAIDecodingArguments
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--model_name", type=str, default='text-davinci-003')
+parser.add_argument("--model_name", type=str, default='gpt-4')
 parser.add_argument("--max_tokens", type=int, default=200)
 parser.add_argument("--batch_size", type=int, default=20)
 parser.add_argument("--polarity", default='neg', choices=['unbiased', 'pos', 'neg'])
